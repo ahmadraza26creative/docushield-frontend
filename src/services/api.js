@@ -3,7 +3,9 @@ import axios from 'axios';
 const API_BASE_URL =
   import.meta.env.VITE_API_BASE_URL ||
   "https://docushield-backend-production-7bd0.up.railway.app/api";
-  
+const AUTH_TOKEN_STORAGE_KEY = 'docushield_access_token';
+const isDev = import.meta.env.DEV;
+
 const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: true,
@@ -12,9 +14,24 @@ const api = axios.create({
   }
 });
 
-// Request Interceptor to attach device fingerprint automatically (continuous verification)
+function getStoredToken() {
+  return localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+}
+
+// Request Interceptor to attach Authorization header and device fingerprint automatically
 api.interceptors.request.use(
   (config) => {
+    const token = getStoredToken();
+    if (token) {
+      config.headers = config.headers || {};
+      config.headers['Authorization'] = `Bearer ${token}`;
+      if (isDev && config.url?.includes('/auth/profile')) {
+        console.debug('[Auth] profile request sent', { hasToken: true, url: config.url });
+      }
+    } else if (isDev && config.url?.includes('/auth/profile')) {
+      console.debug('[Auth] profile request sent', { hasToken: false, url: config.url });
+    }
+
     const fingerprint = localStorage.getItem('device_fingerprint');
     if (fingerprint) {
       config.headers['x-device-fingerprint'] = fingerprint;

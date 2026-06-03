@@ -2,6 +2,20 @@ import React, { createContext, useState, useEffect, useContext } from 'react';
 import api from '../services/api';
 
 const AuthContext = createContext(null);
+const AUTH_TOKEN_STORAGE_KEY = 'docushield_access_token';
+const isDev = import.meta.env.DEV;
+
+function setAuthToken(token) {
+  if (token) {
+    localStorage.setItem(AUTH_TOKEN_STORAGE_KEY, token);
+    api.defaults.headers.common.Authorization = `Bearer ${token}`;
+    if (isDev) console.debug('[Auth] token saved yes');
+  } else {
+    localStorage.removeItem(AUTH_TOKEN_STORAGE_KEY);
+    delete api.defaults.headers.common.Authorization;
+    if (isDev) console.debug('[Auth] token removed');
+  }
+}
 
 // Device Fingerprint Helper
 function generateDeviceFingerprint() {
@@ -39,6 +53,13 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
+  useEffect(() => {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    if (token) {
+      setAuthToken(token);
+    }
+  }, []);
+
   const fetchPendingShares = async () => {
     if (!user) return;
     try {
@@ -52,13 +73,25 @@ export const AuthProvider = ({ children }) => {
 
   // Check auth session on startup
   const checkAuth = async () => {
+    const token = localStorage.getItem(AUTH_TOKEN_STORAGE_KEY);
+    if (!token) {
+      if (isDev) console.debug('[Auth] no token found, skipping profile request');
+      setUser(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       setLoading(true);
       const res = await api.get('/auth/profile');
       setUser(res.data.user);
       setError(null);
     } catch (err) {
-      setUser(null);
+      if (isDev) console.debug('[Auth] profile request failed', err?.response?.status, err?.message);
+      if (err.response?.status === 401 || err.response?.status === 403) {
+        setAuthToken(null);
+        setUser(null);
+      }
     } finally {
       setLoading(false);
     }
@@ -111,6 +144,11 @@ export const AuthProvider = ({ children }) => {
         mfa_code: mfaCode || undefined,
         device_fingerprint: fingerprint 
       });
+      if (res.data?.accessToken) {
+        setAuthToken(res.data.accessToken);
+      } else if (isDev) {
+        console.debug('[Auth] login response did not include accessToken');
+      }
       setUser(res.data.user);
       return res.data;
     } catch (err) {
@@ -126,6 +164,12 @@ export const AuthProvider = ({ children }) => {
     setError(null);
     try {
       const res = await api.post('/auth/register', { email, password, full_name: fullName });
+      if (res.data?.accessToken) {
+        setAuthToken(res.data.accessToken);
+      }
+      if (res.data?.user) {
+        setUser(res.data.user);
+      }
       return res.data;
     } catch (err) {
       const msg = err.response?.data?.error || 'Registration failed.';
@@ -140,6 +184,7 @@ export const AuthProvider = ({ children }) => {
     } catch (err) {
       console.error('Logout error:', err.message);
     } finally {
+      setAuthToken(null);
       setUser(null);
       setPendingShares([]);
     }
